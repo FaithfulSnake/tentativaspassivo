@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Passivo Fanjas</title>
+    <link rel="icon" href="icones/icone-32.png" />
+    <link rel="stylesheet" href="painel.css" />
+  </head>
+  <body>
+    <header class="topo">
+      <div class="marca">
+        <img src="icones/icone-48.png" width="32" height="32" alt="" />
+        <div>
+          <h1>Passivo Fanjas</h1>
+          <p class="sub">PJe 1º grau do TRF1 · prints da linha do tempo + PDF do inteiro teor, uma pasta por processo</p>
+        </div>
+      </div>
+      <div class="acoes">
+        <button id="rodar" class="primario" type="button">Rodar pendentes</button>
+        <button id="parar" type="button" hidden>Parar depois deste</button>
+      </div>
+    </header>
+
+    <section class="situacao" aria-live="polite">
+      <div class="contagem" id="contagem"></div>
+      <p id="etapa" class="etapa"></p>
+      <p id="aviso" class="aviso" hidden></p>
+    </section>
+
+    <main>
+      <table class="lista">
+        <thead>
+          <tr>
+            <th class="col-n">Pasta</th>
+            <th class="col-proc">Processo</th>
+            <th>Resumo</th>
+            <th class="col-sit">Situação</th>
+            <th class="col-acoes"><span class="oculto">Ações</span></th>
+          </tr>
+        </thead>
+        <tbody id="linhas"></tbody>
+      </table>
+    </main>
+
+    <section class="extras">
+      <details>
+        <summary>Configurações</summary>
+        <form id="config" class="config">
+          <label>
+            <span>Pasta principal (dentro de Downloads)</span>
+            <input name="raiz" type="text" maxlength="80" spellcheck="false" />
+          </label>
+          <label>
+            <span>Endereço da tela "Consulta processos" do PJe</span>
+            <input name="urlConsulta" type="url" spellcheck="false" />
+            <small>Se já houver uma aba aberta nessa tela, a extensão usa ela.</small>
+          </label>
+          <label>
+            <span>Prints</span>
+            <select name="recorte">
+              <option value="tela">Tela inteira (como a Ferramentas Fanjas)</option>
+              <option value="linha">Só a linha do tempo</option>
+            </select>
+          </label>
+          <div class="numeros">
+            <label>
+              <span>Espera após rolar (ms)</span>
+              <input name="espera" type="number" min="300" max="10000" step="100" />
+            </label>
+            <label>
+              <span>Espera pelo PDF (s)</span>
+              <input name="limitePdf" type="number" min="30" max="3600" step="10" />
+            </label>
+            <label>
+              <span>Pausa entre processos (s)</span>
+              <input name="pausa" type="number" min="0" max="120" step="1" />
+            </label>
+          </div>
+          <label class="marcar">
+            <input name="fecharAbas" type="checkbox" />
+            <span>Fechar a aba dos autos quando o processo terminar</span>
+          </label>
+          <div class="botoes">
+            <button class="primario" type="submit">Salvar configurações</button>
+            <button id="padrao" type="button">Voltar ao padrão</button>
+          </div>
+        </form>
+      </details>
+
+      <details>
+        <summary>Trocar a lista de processos</summary>
+        <div class="importar">
+          <p>
+            Cole a lista no mesmo formato (“1. Nº 0000000-00.0000.0.00.0000 (ok)”, descrição e “Observação:”). A ordem vira o número da
+            pasta. Processos que já estavam na lista mantêm a situação e os arquivos.
+          </p>
+          <textarea id="texto-lista" rows="10" spellcheck="false" placeholder="1. Nº 1082104-48.2025.4.01.3700 (ok)&#10;Execução fiscal movida pelo IBAMA..."></textarea>
+          <div class="botoes">
+            <button id="importar" type="button">Usar esta lista</button>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Se algo der errado</summary>
+        <div class="ajuda">
+          <p>
+            Se a extensão não achar um campo ou botão do PJe, abra a tela onde ela parou e clique em
+            <strong>Salvar diagnóstico</strong>. Sai um arquivo .txt com o código das abas do PJe em
+            <em>Downloads/&lt;pasta principal&gt;/_diagnostico</em>. Ele mostra o que há na tela, inclusive dados dos processos: mande só
+            para quem for ajustar a extensão.
+          </p>
+          <div class="botoes">
+            <button id="diagnostico" type="button">Salvar diagnóstico</button>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <template id="modelo-linha">
+      <tr>
+        <td class="col-n"><span class="num"></span></td>
+        <td class="col-proc">
+          <button class="numero link" type="button" title="Copiar o número"></button>
+        </td>
+        <td class="resumo">
+          <p class="descricao"></p>
+          <p class="observacao"></p>
+        </td>
+        <td class="col-sit">
+          <span class="selo"></span>
+          <p class="detalhe"></p>
+        </td>
+        <td class="col-acoes">
+          <button class="rodar-um" type="button">Rodar</button>
+          <button class="marcar-ok" type="button"></button>
+          <button class="pasta" type="button">Pasta</button>
+        </td>
+      </tr>
+    </template>
+
+    <script type="module" src="painel.js"></script>
+  </body>
+</html>

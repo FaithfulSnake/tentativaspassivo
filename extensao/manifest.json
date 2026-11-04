@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Passivo Fanjas",
+  "short_name": "Passivo",
+  "version": "1.0.0",
+  "description": "Percorre a lista do passivo no PJe do TRF1: prints da linha do tempo, PDF do inteiro teor e uma pasta por processo, marcando ok na lista.",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabs", "scripting", "downloads", "storage", "unlimitedStorage", "offscreen"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Passivo Fanjas: abrir a lista",
+    "default_icon": {
+      "16": "icones/icone-16.png",
+      "32": "icones/icone-32.png",
+      "48": "icones/icone-48.png"
+    }
+  },
+  "icons": {
+    "16": "icones/icone-16.png",
+    "32": "icones/icone-32.png",
+    "48": "icones/icone-48.png",
+    "128": "icones/icone-128.png"
+  }
+}
