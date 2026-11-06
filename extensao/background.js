@@ -174,17 +174,49 @@ function pareceLogin(url, cfg) {
   return hostDe(url) !== hostDe(cfg.urlConsulta) || /login|logon|\/auth|sso\.|acesso.?negado/i.test(url);
 }
 
-async function esperarAbaAutos(numero, antes, consulta, tempo) {
+// O aviso nativo e o window.open da resposta AJAX rodam no mundo da página.
+async function aberturaNaConsulta(tabId, metodo, arg = null) {
+  const resultados = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    world: 'MAIN',
+    func: (m, a) => globalThis.__passivoAbertura?.[m](a),
+    args: [metodo, arg],
+  });
+  return resultados.map((r) => r.result).filter(Boolean);
+}
+
+async function esperarAbaAutos(numero, antes, consulta, tempo, antesMsgs) {
   const fim = Date.now() + tempo;
+  let confirmou = false;
   while (Date.now() < fim) {
     const abas = await chrome.tabs.query({});
-    const nova = abas.find((t) => !antes.has(t.id) && (ehAbaAutos(t, numero) || t.openerTabId === consulta.id));
-    if (nova) return nova;
+    const nova = abas.find((t) => !antes.has(t.id) && hostDe(t.url || t.pendingUrl) === hostDe(consulta.url) && ehAbaAutos(t, numero));
+    if (nova) return { aba: nova };
     const mesma = abas.find((t) => t.id === consulta.id && ehAbaAutos(t, numero));
-    if (mesma) return mesma;
-    await esperar(500);
+    if (mesma) return { aba: mesma };
+    // Uma navegação ou a troca de um iframe pode destruir o contexto MAIN.
+    const estados = await aberturaNaConsulta(consulta.id, 'estado').catch(() => []);
+    confirmou ||= estados.some((s) => s.confirmacoes > 0);
+    const destino = estados.find((s) => {
+      try {
+        const u = new URL(s.url);
+        return u.origin === new URL(consulta.url).origin && ehAbaAutos({ url: u.href }, numero);
+      } catch {
+        return false;
+      }
+    });
+    if (destino) {
+      const aba = await chrome.tabs.create({ url: destino.url, openerTabId: consulta.id, index: consulta.index + 1, windowId: consulta.windowId, active: true });
+      return { aba };
+    }
+    const msgs = await chamar(consulta.id, 'mensagens').catch(() => []);
+    const erro = msgs.find((m) => !antesMsgs.has(m) && /erro|nao foi possivel|acesso negado|sem permissao|sessao expirad/.test(norm(m)));
+    if (erro) return { erro: `o PJe respondeu ao abrir o processo: ${erro.slice(0, 300)}` };
+    await esperar(300);
   }
-  return null;
+  return { erro: confirmou
+    ? 'confirmei o aviso de acesso do CNJ, mas o PJe não forneceu o endereço dos autos em 30 s. Salve o diagnóstico da consulta para verificar a resposta do PJe.'
+    : 'o clique no resultado não produziu o endereço dos autos nem uma aba do processo em 30 s. Salve o diagnóstico da consulta para verificar a resposta do PJe.' };
 }
 
 // Os autos às vezes abrem numa janelinha (pop-up): deixa do tamanho da janela da consulta.
@@ -232,15 +264,20 @@ async function abrirAutos(numero, cfg, { reaproveitar = true } = {}) {
     return { aba, reaproveitada: false };
   }
   const antes = new Set((await chrome.tabs.query({})).map((t) => t.id));
-  await chamar(consulta.id, 'clicarResultado', { numero }, { todos: true });
-  const aba = await esperarAbaAutos(numero, antes, consulta, 20000);
-  if (!aba) {
-    throw new Error(
-      'cliquei no processo na consulta, mas os autos não abriram. Veja se o Edge bloqueou um pop-up (ícone na barra de endereço) e permita pop-ups para o PJe; ou abra os autos à mão e clique em "Rodar" neste processo.',
-    );
+  const antesMsgs = new Set(await chamar(consulta.id, 'mensagens').catch(() => []));
+  await chrome.scripting.executeScript({ target: { tabId: consulta.id, allFrames: true }, world: 'MAIN', files: ['abertura.js'] });
+  try {
+    const preparadas = await aberturaNaConsulta(consulta.id, 'preparar', { tempo: 35000 });
+    if (!preparadas.some((s) => s.ativo)) throw new Error('não consegui preparar a confirmação do aviso de acesso na consulta do PJe.');
+    const cliques = await chamar(consulta.id, 'clicarResultado', { numero }, { todos: true });
+    if (!cliques.some((c) => c.ok)) throw new Error(cliques.find((c) => c.erro)?.erro || 'não achei o link deste processo no resultado da consulta.');
+    const resultado = await esperarAbaAutos(numero, antes, consulta, 30000, antesMsgs);
+    if (!resultado.aba) throw new Error(resultado.erro);
+    await ajustarJanela(resultado.aba, consulta);
+    return { aba: resultado.aba, reaproveitada: false };
+  } finally {
+    await aberturaNaConsulta(consulta.id, 'finalizar').catch(() => {});
   }
-  await ajustarJanela(aba, consulta);
-  return { aba, reaproveitada: false };
 }
 
 // Abre os autos e espera a página montar. Uma aba antiga que não carrega

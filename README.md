@@ -51,6 +51,10 @@ Quando houver uma versão nova, troque os arquivos da pasta e clique em **Recarr
   da tela, mas não minimize nem cubra o Edge.
 - Não baixe outros arquivos no Edge durante a rodada, para não misturar com o PDF.
 
+Ao abrir um resultado da consulta, a extensão confirma **OK** no aviso específico do CNJ 121/PCA
+0000547-84.2011.2.00.0000 sobre o registro de acesso aos autos. O PJe continua registrando esse acesso.
+O endereço da resposta atual do PJe é aberto em uma aba pela extensão, inclusive quando vem por AJAX.
+
 ## Como usar
 
 Clique no ícone da extensão para abrir o painel com os 27 processos.
@@ -90,7 +94,7 @@ Cada processo mostra o motivo no painel e a rodada segue para o próximo. Os mai
 | --- | --- |
 | PJe pedindo login | Entre no PJe neste Edge e clique em **Rodar** de novo. |
 | Não achou o campo do número na consulta | Abra a tela **Consulta processos** do PJe numa aba. A extensão usa a aba aberta. |
-| Os autos não abriram | Permita pop-ups do PJe (ícone na barra de endereço) ou abra os autos à mão e clique em **Rodar** na linha. |
+| O clique não produziu o endereço dos autos / o PJe não forneceu o endereço após o aviso | Salve o diagnóstico da consulta; a extensão informa se confirmou o aviso ou se o PJe devolveu um erro. |
 | PDF mandado para a “Área de download” | Processo grande: baixe por lá e coloque na pasta do processo. Depois clique em **Marcar ok**. |
 | Consulta não encontrou o processo | Ele pode estar em outro grau ou sistema, ou ter sigilo. |
 
@@ -112,6 +116,7 @@ extensao/
   manifest.json
   background.js   a rodada: abre os autos, prints, PDF, nomes dos arquivos, situação na lista
   pje.js          o que é feito dentro das telas do PJe (campo do número, linha do tempo, painel de download)
+  abertura.js     confirma o aviso específico do CNJ e recebe a URL dos autos da resposta AJAX
   pagina.js       rolagem e medidas para os prints (copiado sem mudanças da Ferramentas Fanjas 1.5.2)
   captura.js      laço de rolagem dos prints (da Ferramentas Fanjas)
   lista.js        lista inicial e leitura de uma lista colada
@@ -127,4 +132,12 @@ Para rodar o teste, com Node 22 e um Chromium ou Chrome for Testing:
 
 ```bash
 CHROME=/caminho/do/chrome node teste/teste-extensao.mjs
+```
+
+Também há testes focados que não precisam instalar a extensão no navegador:
+
+```bash
+CHROME=/caminho/do/chrome node teste/teste-abertura.mjs
+CHROME=/caminho/do/chrome node teste/teste-download.mjs
+node teste/teste-abertura-background.mjs
 ```

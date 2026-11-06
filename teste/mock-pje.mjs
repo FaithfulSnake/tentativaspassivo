@@ -38,7 +38,10 @@ function paginaConsulta() {
   function openPopUp(nome, url) { window.open(url, nome, 'width=1000,height=700'); }
   async function abrirViaAjax(id) {
     const r = await (await fetch('/pje/api/chave?id=' + id)).json();
-    openPopUp('detalheProcesso', r.url);
+    // O PJe real só fornece/abre os autos depois deste confirm na resposta AJAX.
+    if (confirm('Conforme a Resolução CNJ n.º 121 e o PCA 0000547-84.2011.2.00.0000, o acesso aos autos de processo de que o advogado/procurador/defensor público não faz parte será registrado para fins de eventual responsabilização civil, administrativa ou criminal. Continuar?')) {
+      openPopUp('detalheProcesso', r.url);
+    }
   }
   function pesquisar() {
     document.getElementById('resultado').innerHTML = '<div class="rich-mpnl-body">Aguarde...</div>';
