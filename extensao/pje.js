@@ -211,6 +211,49 @@
     return melhor;
   }
 
+  // Reaproveita a rolagem dos prints: guarda também datas de trechos que o
+  // PJe possa retirar do DOM ao carregar outros eventos.
+  let linhaDownload = null;
+  let periodoDownload = null;
+  const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+  function dataDoCabecalho(texto) {
+    const t = norm(texto);
+    const escrita = t.match(/^(\d{1,2})\s+(?:de\s+)?(jan[a-z]*|fev[a-z]*|mar[a-z]*|abr[a-z]*|mai[a-z]*|jun[a-z]*|jul[a-z]*|ago[a-z]*|set[a-z]*|out[a-z]*|nov[a-z]*|dez[a-z]*)\.?\s+(?:de\s+)?(\d{4})$/);
+    const numerica = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    const m = escrita || numerica;
+    if (!m) return null;
+    const dia = Number(m[1]);
+    const mes = escrita ? MESES.indexOf(m[2].slice(0, 3)) + 1 : Number(m[2]);
+    const ano = Number(m[3]);
+    const data = new Date(ano, mes - 1, dia);
+    if (data.getFullYear() !== ano || data.getMonth() !== mes - 1 || data.getDate() !== dia) return null;
+    return `${m[3]}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+  }
+
+  const dataBr = (iso) => iso.split('-').reverse().join('/');
+
+  function registrarPeriodoDownload() {
+    if (!linhaDownload?.isConnected) linhaDownload = acharLinhaDoTempo()?.el;
+    if (linhaDownload) {
+      for (const el of linhaDownload.querySelectorAll('*')) {
+        // Só cabeçalhos inteiros, nunca datas mencionadas dentro de uma
+        // movimentação ("transitado em ...", prazos, texto de petições etc.).
+        if (!visivel(el)) continue;
+        const data = dataDoCabecalho(el.innerText || '');
+        if (!data) continue;
+        const pai = el.parentElement;
+        if (pai && pai !== linhaDownload && !(pai.innerText || '').split(/\r?\n/).some((trecho) => dataDoCabecalho(trecho) === data)) continue;
+        if (!periodoDownload) periodoDownload = { inicio: data, fim: data };
+        else {
+          if (data < periodoDownload.inicio) periodoDownload.inicio = data;
+          if (data > periodoDownload.fim) periodoDownload.fim = data;
+        }
+      }
+    }
+    return periodoDownload ? { inicio: dataBr(periodoDownload.inicio), fim: dataBr(periodoDownload.fim) } : null;
+  }
+
   // Um elemento clicável com "download" no título/ícone (o do topo, que baixa os autos).
   function acharIconeDownload() {
     const vistos = new Set();
@@ -257,11 +300,35 @@
     return [...select.options].find((o) => re.test(norm(o.text)));
   }
 
-  // Deixa o painel para o inteiro teor: sem período nem faixa de ID, sem tipo
-  // de documento, cronologia crescente, sem expediente e sem movimentos.
+  // O "Até" do período é diferente do "Até" da faixa de ID. Localiza o
+  // par a partir de "Período de", inclusive quando os dois rótulos vêm
+  // antes dos dois inputs no HTML (painel em colunas).
+  function camposPeriodo(painel) {
+    const campos = [...painel.querySelectorAll('input')].filter((i) =>
+      /^(text|search|tel|date|)$/i.test(i.type) && !i.disabled && !i.readOnly && visivel(i));
+    const textos = document.createTreeWalker(painel, NodeFilter.SHOW_TEXT);
+    for (let n = textos.nextNode(); n; n = textos.nextNode()) {
+      if (!/^periodo(?: de)?$/.test(norm(n.textContent)) || !visivel(n.parentElement)) continue;
+      const label = n.parentElement.closest('label');
+      const associado = label?.htmlFor ? document.getElementById(label.htmlFor) : null;
+      const inicio = campos.includes(associado) ? associado : campos.find((i) => n.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const fim = campos[campos.indexOf(inicio) + 1];
+      if (inicio && fim) return { inicio, fim };
+    }
+    throw new Error('não achei os campos "Período de" e "Até" do período no painel de download.');
+  }
+
+  function valorData(campo, iso) {
+    return campo.type === 'date' ? iso : dataBr(iso);
+  }
+
+  // Inteiro teor no intervalo completo da linha do tempo, sem faixa de ID
+  // nem tipo de documento, crescente e incluindo expediente e movimentos.
   function ajustarCampos(painel) {
     const feito = [];
+    const periodo = camposPeriodo(painel);
     for (const campo of painel.querySelectorAll('input')) {
+      if (campo === periodo.inicio || campo === periodo.fim) continue;
       if (!/^(text|search|tel|number|date|)$/i.test(campo.type) || campo.disabled) continue;
       // vazio ou só a máscara ("__/__/____"): nada a limpar
       if (!visivel(campo) || !/\d/.test(campo.value)) continue;
@@ -275,14 +342,37 @@
       const nome = norm(rotulo(sel, painel));
       let alvo = null;
       if (/cronologia|ordem/.test(nome)) alvo = opcao(sel, /^crescente$/);
-      else if (/expediente|movimento/.test(nome)) alvo = opcao(sel, /^nao$/);
+      else if (/expediente|movimento/.test(nome)) alvo = opcao(sel, /^sim$/);
       else if (/tipo/.test(nome) && sel.options[0] && /selecione|todos|^$/.test(norm(sel.options[0].text))) alvo = sel.options[0];
       if (alvo && sel.value !== alvo.value) {
         definirValor(sel, alvo.value);
         feito.push(`"${rotulo(sel, painel)}" = ${alvo.text.trim()}`);
       }
     }
+    for (const parte of ['inicio', 'fim']) {
+      const campo = periodo[parte];
+      const valor = valorData(campo, periodoDownload[parte]);
+      if (campo.value === valor) continue;
+      definirValor(campo, valor);
+      campo.dispatchEvent(new Event('blur', { bubbles: true }));
+      feito.push(`período ${parte} = ${valor}`);
+    }
     return feito;
+  }
+
+  function conferirCamposDownload(painel) {
+    const periodo = camposPeriodo(painel);
+    for (const parte of ['inicio', 'fim']) {
+      if (periodo[parte].value !== valorData(periodo[parte], periodoDownload[parte])) {
+        throw new Error('o PJe não manteve as datas nos campos do período de download.');
+      }
+    }
+    for (const nome of ['expediente', 'movimentos']) {
+      const sel = [...painel.querySelectorAll('select')].find((s) => !s.disabled && visivel(s.parentElement || s) && norm(rotulo(s, painel)).includes(nome));
+      if (!sel || !/^sim$/.test(norm(sel.selectedOptions[0]?.text))) {
+        throw new Error(`não consegui selecionar "Sim" em "Incluir ${nome}".`);
+      }
+    }
   }
 
   function lerCampos(painel) {
@@ -300,6 +390,14 @@
   // ------------------------------------------------------------ API
 
   const api = {
+    iniciarPeriodoDownload() {
+      periodoDownload = null;
+      linhaDownload = acharLinhaDoTempo()?.el;
+      return registrarPeriodoDownload();
+    },
+
+    registrarPeriodoDownload,
+
     // Na tela "Consulta processos": cola o número, pesquisa e espera o resultado.
     // Devolve { ok, url } (url = endereço dos autos, se estiver no link) ou { erro }.
     async pesquisar({ numero, tempo = 45000 }) {
@@ -372,6 +470,7 @@
 
     // Abre o painel de download (ícone no topo dos autos) e ajusta os campos.
     async prepararDownload() {
+      if (!registrarPeriodoDownload()) return { ok: false, erro: 'não consegui identificar as datas da linha do tempo para preencher o período do download.' };
       let botao = botaoDownloadFinal();
       if (!botao) {
         const icone = acharIconeDownload();
@@ -381,12 +480,23 @@
         if (!botao) return { ok: false, erro: 'cliquei no ícone de download, mas o painel com o botão DOWNLOAD não apareceu.' };
       }
       // trocar uma opção pode fazer o PJe redesenhar o painel: ajusta, espera e confere de novo
-      const feito = ajustarCampos(painelDe(botao));
-      await esperar(feito.length ? 1500 : 300);
-      botao = await esperarAte(botaoDownloadFinal, 5000);
-      if (!botao) return { ok: false, erro: 'o painel de download sumiu depois de ajustar os campos.' };
-      feito.push(...ajustarCampos(painelDe(botao)));
-      return { ok: true, feito, campos: lerCampos(painelDe(botao)) };
+      try {
+        const feito = ajustarCampos(painelDe(botao));
+        await esperar(feito.length ? 1500 : 300);
+        botao = await esperarAte(botaoDownloadFinal, 5000);
+        if (!botao) return { ok: false, erro: 'o painel de download sumiu depois de ajustar os campos.' };
+        const refeitos = ajustarCampos(painelDe(botao));
+        feito.push(...refeitos);
+        if (refeitos.length) {
+          await esperar(1500);
+          botao = await esperarAte(botaoDownloadFinal, 5000);
+          if (!botao) return { ok: false, erro: 'o painel de download sumiu depois de ajustar os campos.' };
+        }
+        conferirCamposDownload(painelDe(botao));
+        return { ok: true, feito, periodo: registrarPeriodoDownload(), campos: lerCampos(painelDe(botao)) };
+      } catch (e) {
+        return { ok: false, erro: e.message };
+      }
     },
 
     clicarDownload() {

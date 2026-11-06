@@ -449,6 +449,7 @@ async function tirarPrints(aba, base, cfg, numero, arquivos) {
   await trazerParaFrente(aba);
   await injetar(aba.id, ['pagina.js']);
   const marca = await chamar(aba.id, 'marcarLinhaDoTempo');
+  await chamar(aba.id, 'iniciarPeriodoDownload');
   const configPagina = { usarEscolhida: false, recorte: { modo: cfg.recorte === 'linha' ? 'area' : 'tela', retangulo: null } };
   let limite = 400;
   let aviso = '';
@@ -476,7 +477,10 @@ async function tirarPrints(aba, base, cfg, numero, arquivos) {
     opcoes: { limite, espera: cfg.espera, sobreposicao: 10, esconderFixos: true },
     pagina: (metodo, arg) => chamarPagina(aba.id, metodo, arg),
     configPagina,
-    antesDoPrint: () => garantirVisivel(aba),
+    antesDoPrint: async () => {
+      await garantirVisivel(aba);
+      await chamar(aba.id, 'registrarPeriodoDownload');
+    },
     tirarPrint: async (medidas, inicio) => ({
       dataUrl: await capturarTela(aba.windowId),
       recorte: inicio?.recorte || null,

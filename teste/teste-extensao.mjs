@@ -212,9 +212,12 @@ Já feito à mão.`;
   conferir(enviados.length === 2, `2 DOWNLOADs pedidos ao PJe (${enviados.length})`);
   for (const e of enviados) {
     const c = e.campos;
+    const periodo = e.numero === '0005417-28.2017.4.01.3700'
+      ? ['01/01/2017', '17/12/2022'] // inclui os eventos antigos carregados ao rolar
+      : ['28/01/2022', '26/03/2022'];
     conferir(
-      c.dtIni === '' && c.dtFim === '' && c.idDe === '' && c.cronologia === 'ASC' && c.expediente === 'N' && c.movimentos === 'N' && c.tipoDoc === '',
-      `${e.numero}: inteiro teor, crescente, sem expediente e sem movimentos (${JSON.stringify(c)})`,
+      c.dtIni === periodo[0] && c.dtFim === periodo[1] && c.idDe === '' && c.idAte === '' && c.cronologia === 'ASC' && c.expediente === 'S' && c.movimentos === 'S' && c.tipoDoc === '',
+      `${e.numero}: período completo da linha do tempo, crescente, com expediente e movimentos (${JSON.stringify(c)})`,
     );
   }
   const abas = await (await fetch(`${http}/json/list`)).json();

@@ -6,8 +6,8 @@ para cada processo, faz o que hoje é feito à mão:
 1. abre a tela **Consulta processos** do PJe, cola o número e pesquisa;
 2. abre os autos;
 3. tira os **prints da linha do tempo**, rolando do topo até o fim, igual à Ferramentas Fanjas;
-4. abre o painel de **download** e baixa o **inteiro teor**: período e ID em branco, cronologia crescente, sem expediente
-   e sem movimentos;
+4. abre o painel de **download** e baixa o **inteiro teor**: período da data mais antiga à mais recente da linha do tempo,
+   ID em branco, cronologia crescente, incluindo expediente e movimentos;
 5. salva tudo na pasta do processo e marca **ok** na lista.
 
 ```
@@ -74,8 +74,9 @@ e se os prints pegam a tela inteira ou só a linha do tempo.
 
 ## O que mudou em relação ao processo manual
 
-- **Período do download em branco.** Na gravação, o filtro estava de 10/09/2026 até 27/05/2026, com o início depois
-  do fim. A extensão limpa esses campos e baixa o processo inteiro.
+- **Período completo da linha do tempo.** Durante a rolagem dos prints, a extensão lê as datas dos movimentos e petições,
+  incluindo os mais antigos carregados ao rolar. Preenche **Período de** com a menor data e o **Até** desse período com a
+  maior, sem confundir com a faixa de ID. **Incluir expediente** e **Incluir movimentos** ficam em **Sim**.
 - **Sem ZIP de nome aleatório.** Na gravação, o ZIP dos prints saiu como `914fcd6f-….zip`. Aqui, cada print vai solto,
   com o nome certo, para a pasta do processo. Se alguma outra extensão trocar o nome de um download, a extensão percebe
   e para com um aviso.
