@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Passivo Fanjas",
   "short_name": "Passivo",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Percorre a lista do passivo no PJe do TRF1: prints da linha do tempo, PDF do inteiro teor e uma pasta por processo, marcando ok na lista.",
   "minimum_chrome_version": "116",
   "permissions": ["tabs", "scripting", "downloads", "storage", "unlimitedStorage", "offscreen"],

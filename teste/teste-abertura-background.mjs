@@ -24,8 +24,9 @@ async function navegador(opcoes = {}) {
   const criadas = [];
   const recarregadas = [];
   const chamadas = [];
+  const Relogio = class extends Date { static now() { return agora; } };
   const originais = { confirm: () => false, open: () => ({}) };
-  const main = vm.createContext({ URL, location: new URL(CONSULTA), confirm: originais.confirm, open: originais.open });
+  const main = vm.createContext({ URL, Date: Relogio, location: new URL(CONSULTA), confirm: originais.confirm, open: originais.open });
   main.window = main;
   const agendar = (fn, ms) => {
     const id = ++proximoTimer;
@@ -67,7 +68,11 @@ async function navegador(opcoes = {}) {
       return opcoes.clique?.({ numero, responderAutos, navegarNaMesmaAba }) ?? { ok: true };
     },
   };
-  const isolado = vm.createContext({ __passivoPje: api });
+  const apiPrincipal = opcoes.formularioEmQuadro ? { ...api, pesquisar: () => ({ ok: false, semCampo: true }) } : api;
+  const isolados = new Map([
+    [0, vm.createContext({ Date: Relogio, __passivoPje: apiPrincipal })],
+    [9, vm.createContext({ Date: Relogio, __passivoPje: api })],
+  ]);
   const chrome = {
     storage: { local: { get: async () => ({ lista: [] }), set: async () => {} } },
     runtime: { onMessage: { addListener() {} } },
@@ -88,7 +93,11 @@ async function navegador(opcoes = {}) {
     scripting: {
       async executeScript(pedido) {
         const metodo = pedido.args?.[0];
-        chamadas.push({ mundo: pedido.world ?? 'ISOLATED', arquivos: pedido.files, metodo });
+        chamadas.push({
+          mundo: pedido.world ?? 'ISOLATED', arquivos: pedido.files, metodo,
+          todos: pedido.target.allFrames === true,
+          quadros: Array.from(pedido.target.frameIds ?? [0]),
+        });
         if (pedido.files) {
           if (pedido.files.includes('abertura.js')) vm.runInContext(abertura, main);
           return [];
@@ -97,16 +106,21 @@ async function navegador(opcoes = {}) {
           opcoes.falharLeituraMain = false;
           throw new Error('Frame was removed');
         }
-        const contexto = pedido.world === 'MAIN' ? main : isolado;
-        contexto.__argumentos = pedido.args ?? [];
-        const result = await vm.runInContext(`(${pedido.func.toString()})(...__argumentos)`, contexto);
-        return [{ frameId: 0, result }];
+        const quadros = pedido.target.allFrames ? [0, 9] : pedido.target.frameIds ?? [0];
+        const resultados = [];
+        for (const frameId of quadros) {
+          const contexto = pedido.world === 'MAIN' ? main : isolados.get(frameId);
+          contexto.__argumentos = pedido.args ?? [];
+          const result = await vm.runInContext(`(${pedido.func.toString()})(...__argumentos)`, contexto);
+          resultados.push({ frameId, result });
+        }
+        return resultados;
       },
     },
   };
   const contexto = vm.createContext({
-    chrome, URL, console, esperar,
-    Date: class extends Date { static now() { return agora; } },
+    chrome, URL, console, esperar, Date: Relogio,
+    setTimeout: agendar, clearTimeout: (id) => timers.delete(id),
     soDigitos: (s) => String(s ?? '').replace(/\D/g, ''),
   });
   // Mantém as funções de produção inteiras. Só remove as importações em
@@ -200,5 +214,34 @@ test('timeout encerra a sessão sem alegar bloqueio de pop-up', async () => {
   const b = await navegador();
   await assert.rejects(b.abrir(), (erro) => /em 30 s/.test(erro.message) && !/pop-up/.test(erro.message));
   assert.equal(b.criadas.length, 0);
+  b.restaurou();
+});
+
+test('consulta no quadro principal não depende dos quadros auxiliares', async () => {
+  const url = autos(606);
+  const b = await navegador({ clique: ({ responderAutos }) => { responderAutos(url); return { ok: true }; } });
+  assert.equal((await b.abrir()).aba.url, url);
+  assert.ok(b.chamadas.length > 0);
+  assert.ok(b.chamadas.every((c) => !c.todos), 'não consulta allFrames se encontrou o formulário no principal');
+  assert.ok(b.chamadas.every((c) => c.quadros.length === 1 && c.quadros[0] === 0));
+  b.restaurou();
+});
+
+test('quando o formulário está em iframe, abre e acompanha a resposta nesse quadro', async () => {
+  const url = autos(707);
+  const b = await navegador({
+    formularioEmQuadro: true,
+    clique: ({ responderAutos }) => { responderAutos(url); return { ok: true }; },
+  });
+  assert.equal((await b.abrir()).aba.url, url);
+  const pesquisas = b.chamadas.filter((c) => c.metodo === 'pesquisar');
+  assert.equal(pesquisas.length, 2, 'tenta principal antes do fallback');
+  assert.deepEqual(pesquisas[0].quadros, [0]);
+  assert.equal(pesquisas[0].todos, false);
+  assert.equal(pesquisas[1].todos, true);
+  const aberturaNoQuadro = b.chamadas.filter((c) => c.mundo === 'MAIN' || c.metodo === 'clicarResultado' || c.metodo === 'mensagens');
+  assert.ok(aberturaNoQuadro.length > 0);
+  assert.ok(aberturaNoQuadro.every((c) => !c.todos && c.quadros.length === 1 && c.quadros[0] === 9), 'não perde o frameId encontrado na pesquisa');
+  assert.deepEqual(b.criadas.map((a) => a.url), [url]);
   b.restaurou();
 });

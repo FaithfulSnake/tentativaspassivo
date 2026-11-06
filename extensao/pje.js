@@ -416,7 +416,7 @@
       const inicio = Date.now();
       const link = await esperarAte(() => acharLinkDoProcesso(numero, campo) || (Date.now() - inicio > 6000 && semResultado() ? 'nada' : null), tempo, 400);
       if (!link) return { ok: false, erro: `a consulta não mostrou o processo em ${Math.round(tempo / 1000)} s.` };
-      if (link === 'nada') return { ok: false, erro: 'a consulta do PJe não encontrou este processo (pode estar em outro grau ou sistema, ou com sigilo).' };
+      if (link === 'nada') return { ok: false, erro: 'a consulta do PJe não retornou este número com os filtros atuais. Confira o resultado na aba da consulta.' };
       return { ok: true, url: enderecoDoLink(link) };
     },
 

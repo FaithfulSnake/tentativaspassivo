@@ -55,6 +55,11 @@ Ao abrir um resultado da consulta, a extensão confirma **OK** no aviso específ
 0000547-84.2011.2.00.0000 sobre o registro de acesso aos autos. O PJe continua registrando esse acesso.
 O endereço da resposta atual do PJe é aberto em uma aba pela extensão, inclusive quando vem por AJAX.
 
+A consulta é feita primeiro no quadro principal; os outros quadros só são usados se o formulário não estiver nele.
+Se uma chamada à página ou à aba deixar de responder, o prazo é controlado pela extensão e a rodada é interrompida,
+mantendo os próximos processos pendentes. Recarregue a consulta antes de tentar novamente. O painel informa a etapa
+que estava executando; a interrupção não cancela uma requisição que já foi enviada ao PJe.
+
 ## Como usar
 
 Clique no ícone da extensão para abrir o painel com os 27 processos.
@@ -96,7 +101,7 @@ Cada processo mostra o motivo no painel e a rodada segue para o próximo. Os mai
 | Não achou o campo do número na consulta | Abra a tela **Consulta processos** do PJe numa aba. A extensão usa a aba aberta. |
 | O clique não produziu o endereço dos autos / o PJe não forneceu o endereço após o aviso | Salve o diagnóstico da consulta; a extensão informa se confirmou o aviso ou se o PJe devolveu um erro. |
 | PDF mandado para a “Área de download” | Processo grande: baixe por lá e coloque na pasta do processo. Depois clique em **Marcar ok**. |
-| Consulta não encontrou o processo | Ele pode estar em outro grau ou sistema, ou ter sigilo. |
+| Consulta não retornou o número com os filtros atuais | Confira o número e os filtros na aba da consulta. |
 
 A extensão foi testada contra uma **imitação** do PJe (pasta `teste`), não contra o PJe de verdade, porque o PJe exige
 o seu login. Se ela não achar um campo ou botão no PJe real, abra a tela onde ela parou e use **Se algo der errado ›
@@ -140,4 +145,5 @@ Também há testes focados que não precisam instalar a extensão no navegador:
 CHROME=/caminho/do/chrome node teste/teste-abertura.mjs
 CHROME=/caminho/do/chrome node teste/teste-download.mjs
 node teste/teste-abertura-background.mjs
+node teste/teste-travamento.mjs
 ```

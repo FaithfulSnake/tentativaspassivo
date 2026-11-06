@@ -186,7 +186,7 @@ Já feito à mão.`;
   for (const i of fim) console.log(`     ${String(i.ordem).padStart(2, '0')} ${i.numero} [${i.status}] ${i.detalhe}`);
   conferir(fim[0].status === 'ok', 'processo 1 (linha do tempo longa) ok');
   conferir(fim[1].status === 'ok', 'processo 2 (linha do tempo curta) ok');
-  conferir(fim[2].status === 'erro' && /não encontrou/.test(fim[2].detalhe), 'processo 3 (inexistente) com erro de consulta');
+  conferir(fim[2].status === 'erro' && /não retornou/.test(fim[2].detalhe), 'processo 3 (inexistente) com erro de consulta');
   conferir(fim[3].status === 'ok' && fim[3].manual, 'processo 4 (marcado ok) não foi mexido');
 
   const raiz = path.join(downloads, 'PASSIVO TESTE');

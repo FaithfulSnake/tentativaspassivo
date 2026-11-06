@@ -98,21 +98,62 @@ const pronto = emFila(async () => {
 
 // ------------------------------------------------------------------ abas e páginas
 
-async function injetar(tabId, arquivos, todos = false) {
-  await chrome.scripting.executeScript({ target: { tabId, allFrames: todos }, files: arquivos });
+// O prazo precisa rodar no worker: um diálogo ou quadro suspenso pode
+// impedir tanto a resposta de executeScript quanto os timers da página.
+function aguardarResposta(iniciar, tempo, descricao, limpeza = false) {
+  if (rodada?.erroPagina && !limpeza) return Promise.reject(rodada.erroPagina);
+  const rodadaAtual = rodada;
+  return new Promise((pronto, falha) => {
+    const timer = setTimeout(() => {
+      const erro = parada(`O PJe não respondeu ao tentar ${descricao} em ${Math.round(tempo / 1000)} s. A rodada foi interrompida. Recarregue a aba de consulta antes de tentar novamente.`);
+      if (rodadaAtual && rodada === rodadaAtual) rodadaAtual.erroPagina ??= erro;
+      falha(erro);
+    }, tempo);
+    Promise.resolve().then(iniciar).then(
+      (r) => { clearTimeout(timer); pronto(r); },
+      (e) => { clearTimeout(timer); falha(e); },
+    );
+  });
+}
+
+const executarScript = (pedido, tempo = 10000, descricao = 'responder à extensão', limpeza = false) =>
+  aguardarResposta(() => chrome.scripting.executeScript(pedido), tempo, descricao, limpeza);
+
+const acessarAba = (metodo, ...args) => aguardarResposta(() => chrome.tabs[metodo](...args), 10000, 'acessar a aba do PJe');
+
+function ignorarPaginaAusente(erro) {
+  if (erro.pararTudo) throw erro;
+  return [];
+}
+
+const alvoQuadro = (tabId, todos = false, frameId = 0) => todos ? { tabId, allFrames: true } : { tabId, frameIds: [frameId] };
+
+const DESCRICOES_PAGINA = {
+  pesquisar: 'pesquisar o número do processo',
+  esperarAutos: 'aguardar os autos carregarem',
+  prepararDownload: 'preencher o painel de download',
+  clicarResultado: 'abrir o resultado da consulta',
+  clicarDownload: 'iniciar o download dos autos',
+  mensagens: 'ler a resposta do PJe',
+};
+
+async function injetar(tabId, arquivos, todos = false, frameId = 0) {
+  await executarScript({ target: alvoQuadro(tabId, todos, frameId), files: arquivos }, 10000, 'preparar a página');
 }
 
 // Chama um método de pje.js na aba (todos = em todos os quadros; devolve a lista).
-async function chamar(tabId, metodo, arg = null, { todos = false } = {}) {
+async function chamar(tabId, metodo, arg = null, { todos = false, frameId = 0 } = {}) {
+  const tempo = ['pesquisar', 'esperarAutos'].includes(metodo) ? (arg?.tempo || 60000) + 5000 : metodo === 'prepararDownload' ? 20000 : 10000;
   for (let tentativa = 0; tentativa < 2; tentativa++) {
-    const resultados = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: todos },
-      func: (m, a) => (globalThis.__passivoPje ? globalThis.__passivoPje[m](a) : { semApi: true }),
-      args: [metodo, arg],
-    });
-    const valores = resultados.map((r) => r.result).filter((v) => v != null);
+    const resultados = await executarScript({
+      target: alvoQuadro(tabId, todos, frameId),
+      func: (m, a, ate) => Date.now() >= ate ? { expirou: true } : (globalThis.__passivoPje ? globalThis.__passivoPje[m](a) : { semApi: true }),
+      args: [metodo, arg, Date.now() + tempo],
+    }, tempo, DESCRICOES_PAGINA[metodo] || 'ler a linha do tempo');
+    const valores = resultados.map((r) => metodo === 'pesquisar' && r.result ? { ...r.result, frameId: r.frameId ?? frameId } : r.result).filter((v) => v != null);
+    if (valores.some((v) => v.expirou)) throw parada('O prazo de resposta terminou antes de a página executar a ação. Recarregue a aba de consulta.');
     if (valores.some((v) => v.semApi)) {
-      await injetar(tabId, ['pje.js'], todos);
+      await injetar(tabId, ['pje.js'], todos, frameId);
       continue;
     }
     return todos ? valores : valores[0];
@@ -122,11 +163,11 @@ async function chamar(tabId, metodo, arg = null, { todos = false } = {}) {
 
 // Chama a API de pagina.js (rolagem dos prints) na aba.
 async function chamarPagina(tabId, metodo, arg = null) {
-  const [r] = await chrome.scripting.executeScript({
+  const [r] = await executarScript({
     target: { tabId },
     func: (m, a) => (globalThis.__clippingPrints ? globalThis.__clippingPrints[m](a) : { semApi: true }),
     args: [metodo, arg],
-  });
+  }, 10000, 'preparar a captura da linha do tempo');
   if (r?.result?.semApi) throw new Error('a página dos autos recarregou durante os prints.');
   return r?.result;
 }
@@ -134,7 +175,7 @@ async function chamarPagina(tabId, metodo, arg = null) {
 async function esperarCarregar(tabId, tempo = 60000) {
   const fim = Date.now() + tempo;
   for (;;) {
-    const aba = await chrome.tabs.get(tabId);
+    const aba = await acessarAba('get', tabId);
     if (aba.status === 'complete' && aba.url) return aba;
     if (Date.now() > fim) throw new Error(`a página demorou mais de ${Math.round(tempo / 1000)} s para carregar.`);
     await esperar(400);
@@ -150,14 +191,14 @@ const ehAbaAutos = (t, numero) => {
 async function acharAbaAutos(numero, cfg) {
   const host = hostDe(cfg.urlConsulta);
   const d = soDigitos(numero);
-  return (await chrome.tabs.query({})).find(
+  return (await acessarAba('query', {})).find(
     (t) => hostDe(t.url) === host && soDigitos(t.title).includes(d) && /ConsultaProcesso\/Detalhe|listProcessoCompleto|listAutosDigitais/i.test(t.url),
   );
 }
 
 async function acharAbaConsulta(cfg) {
   const alvo = new URL(cfg.urlConsulta);
-  const abas = await chrome.tabs.query({});
+  const abas = await acessarAba('query', {});
   return (
     abas.find((t) => {
       try {
@@ -175,27 +216,28 @@ function pareceLogin(url, cfg) {
 }
 
 // O aviso nativo e o window.open da resposta AJAX rodam no mundo da página.
-async function aberturaNaConsulta(tabId, metodo, arg = null) {
-  const resultados = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
+async function aberturaNaConsulta(tabId, metodo, arg = null, frameId = 0) {
+  const resultados = await executarScript({
+    target: alvoQuadro(tabId, false, frameId),
     world: 'MAIN',
-    func: (m, a) => globalThis.__passivoAbertura?.[m](a),
-    args: [metodo, arg],
-  });
+    func: (m, a, ate) => m === 'finalizar' || Date.now() < ate ? globalThis.__passivoAbertura?.[m](a) : { expirou: true },
+    args: [metodo, arg, Date.now() + 3000],
+  }, 3000, metodo === 'finalizar' ? 'encerrar a abertura dos autos' : 'acompanhar a abertura dos autos', metodo === 'finalizar');
+  if (resultados.some((r) => r.result?.expirou)) throw parada('A preparação da abertura expirou antes de executar no PJe. Recarregue a aba de consulta.');
   return resultados.map((r) => r.result).filter(Boolean);
 }
 
-async function esperarAbaAutos(numero, antes, consulta, tempo, antesMsgs) {
+async function esperarAbaAutos(numero, antes, consulta, tempo, antesMsgs, frameId = 0) {
   const fim = Date.now() + tempo;
   let confirmou = false;
   while (Date.now() < fim) {
-    const abas = await chrome.tabs.query({});
+    const abas = await acessarAba('query', {});
     const nova = abas.find((t) => !antes.has(t.id) && hostDe(t.url || t.pendingUrl) === hostDe(consulta.url) && ehAbaAutos(t, numero));
     if (nova) return { aba: nova };
     const mesma = abas.find((t) => t.id === consulta.id && ehAbaAutos(t, numero));
     if (mesma) return { aba: mesma };
     // Uma navegação ou a troca de um iframe pode destruir o contexto MAIN.
-    const estados = await aberturaNaConsulta(consulta.id, 'estado').catch(() => []);
+    const estados = await aberturaNaConsulta(consulta.id, 'estado', null, frameId).catch(ignorarPaginaAusente);
     confirmou ||= estados.some((s) => s.confirmacoes > 0);
     const destino = estados.find((s) => {
       try {
@@ -206,10 +248,10 @@ async function esperarAbaAutos(numero, antes, consulta, tempo, antesMsgs) {
       }
     });
     if (destino) {
-      const aba = await chrome.tabs.create({ url: destino.url, openerTabId: consulta.id, index: consulta.index + 1, windowId: consulta.windowId, active: true });
+      const aba = await acessarAba('create', { url: destino.url, openerTabId: consulta.id, index: consulta.index + 1, windowId: consulta.windowId, active: true });
       return { aba };
     }
-    const msgs = await chamar(consulta.id, 'mensagens').catch(() => []);
+    const msgs = await chamar(consulta.id, 'mensagens', null, { frameId }).catch(ignorarPaginaAusente);
     const erro = msgs.find((m) => !antesMsgs.has(m) && /erro|nao foi possivel|acesso negado|sem permissao|sessao expirad/.test(norm(m)));
     if (erro) return { erro: `o PJe respondeu ao abrir o processo: ${erro.slice(0, 300)}` };
     await esperar(300);
@@ -223,10 +265,14 @@ async function esperarAbaAutos(numero, antes, consulta, tempo, antesMsgs) {
 async function ajustarJanela(aba, consulta) {
   if (aba.windowId === consulta.windowId) return;
   try {
-    const [nova, base] = await Promise.all([chrome.windows.get(aba.windowId), chrome.windows.get(consulta.windowId)]);
-    if (base.state === 'maximized') await chrome.windows.update(nova.id, { state: 'maximized' });
-    else if (base.state === 'normal') await chrome.windows.update(nova.id, { state: 'normal', left: base.left, top: base.top, width: base.width, height: base.height });
-  } catch {
+    const [nova, base] = await Promise.all([
+      aguardarResposta(() => chrome.windows.get(aba.windowId), 10000, 'localizar a janela dos autos'),
+      aguardarResposta(() => chrome.windows.get(consulta.windowId), 10000, 'localizar a janela de consulta'),
+    ]);
+    if (base.state === 'maximized') await aguardarResposta(() => chrome.windows.update(nova.id, { state: 'maximized' }), 10000, 'ajustar a janela dos autos');
+    else if (base.state === 'normal') await aguardarResposta(() => chrome.windows.update(nova.id, { state: 'normal', left: base.left, top: base.top, width: base.width, height: base.height }), 10000, 'ajustar a janela dos autos');
+  } catch (e) {
+    if (e.pararTudo) throw e;
     // fica como abriu
   }
 }
@@ -235,21 +281,29 @@ async function ajustarJanela(aba, consulta) {
 // (cola o número, pesquisa e abre o resultado, como na gravação).
 // Devolve { aba, reaproveitada }.
 async function abrirAutos(numero, cfg, { reaproveitar = true } = {}) {
+  await etapa(numero, 'localizando a aba de consulta do PJe');
   const ja = reaproveitar ? await acharAbaAutos(numero, cfg) : null;
   if (ja) {
-    await chrome.tabs.reload(ja.id); // sessão nova da página (a antiga pode ter expirado)
+    await acessarAba('reload', ja.id); // sessão nova da página (a antiga pode ter expirado)
     await esperar(800);
     return { aba: ja, reaproveitada: true };
   }
   let consulta = await acharAbaConsulta(cfg);
-  if (!consulta) consulta = await chrome.tabs.create({ url: cfg.urlConsulta, active: true });
-  else await chrome.tabs.update(consulta.id, { active: true });
+  if (!consulta) consulta = await acessarAba('create', { url: cfg.urlConsulta, active: true });
+  else await acessarAba('update', consulta.id, { active: true });
+  await etapa(numero, 'aguardando a consulta do PJe carregar');
   consulta = await esperarCarregar(consulta.id);
   if (pareceLogin(consulta.url, cfg)) throw parada('O PJe está pedindo login. Entre no PJe neste Edge e clique em "Rodar" de novo.');
 
-  await injetar(consulta.id, ['pje.js'], true);
-  const respostas = await chamar(consulta.id, 'pesquisar', { numero, tempo: 45000 }, { todos: true });
-  const r = respostas.find((x) => x.ok) || respostas.find((x) => x.erro);
+  await etapa(numero, 'pesquisando o número na consulta do PJe');
+  await injetar(consulta.id, ['pje.js']);
+  let r = await chamar(consulta.id, 'pesquisar', { numero, tempo: 45000 });
+  if (!r?.ok && !r?.erro) {
+    // Só procura em quadros auxiliares se o formulário não estiver no principal.
+    await injetar(consulta.id, ['pje.js'], true);
+    const respostas = await chamar(consulta.id, 'pesquisar', { numero, tempo: 45000 }, { todos: true });
+    r = respostas.find((x) => x.ok) || respostas.find((x) => x.erro);
+  }
   if (!r) {
     throw new Error(
       `não achei o campo do número do processo na aba "${consulta.title}". Abra a tela "Consulta processos" do PJe numa aba deste Edge (ou confira o endereço da consulta nas configurações) e rode de novo.`,
@@ -260,23 +314,34 @@ async function abrirAutos(numero, cfg, { reaproveitar = true } = {}) {
   // O link do resultado traz o endereço dos autos: abre numa aba ao lado (o
   // bloqueador de pop-ups do Edge não interfere). Sem endereço, clica no link.
   if (r.url) {
-    const aba = await chrome.tabs.create({ url: r.url, openerTabId: consulta.id, index: consulta.index + 1, windowId: consulta.windowId, active: true });
+    const aba = await acessarAba('create', { url: r.url, openerTabId: consulta.id, index: consulta.index + 1, windowId: consulta.windowId, active: true });
     return { aba, reaproveitada: false };
   }
-  const antes = new Set((await chrome.tabs.query({})).map((t) => t.id));
-  const antesMsgs = new Set(await chamar(consulta.id, 'mensagens').catch(() => []));
-  await chrome.scripting.executeScript({ target: { tabId: consulta.id, allFrames: true }, world: 'MAIN', files: ['abertura.js'] });
+  const antes = new Set((await acessarAba('query', {})).map((t) => t.id));
+  const frameId = r.frameId ?? 0;
+  const antesMsgs = new Set(await chamar(consulta.id, 'mensagens', null, { frameId }).catch(ignorarPaginaAusente));
+  await etapa(numero, 'preparando a confirmação de acesso aos autos');
+  await executarScript({ target: alvoQuadro(consulta.id, false, frameId), world: 'MAIN', files: ['abertura.js'] }, 10000, 'preparar a confirmação de acesso');
+  let falha;
   try {
-    const preparadas = await aberturaNaConsulta(consulta.id, 'preparar', { tempo: 35000 });
+    const preparadas = await aberturaNaConsulta(consulta.id, 'preparar', { tempo: 35000 }, frameId);
     if (!preparadas.some((s) => s.ativo)) throw new Error('não consegui preparar a confirmação do aviso de acesso na consulta do PJe.');
-    const cliques = await chamar(consulta.id, 'clicarResultado', { numero }, { todos: true });
-    if (!cliques.some((c) => c.ok)) throw new Error(cliques.find((c) => c.erro)?.erro || 'não achei o link deste processo no resultado da consulta.');
-    const resultado = await esperarAbaAutos(numero, antes, consulta, 30000, antesMsgs);
+    await etapa(numero, 'abrindo o resultado e aguardando a resposta do PJe');
+    const clique = await chamar(consulta.id, 'clicarResultado', { numero }, { frameId });
+    if (!clique?.ok) throw new Error(clique?.erro || 'não achei o link deste processo no resultado da consulta.');
+    const resultado = await esperarAbaAutos(numero, antes, consulta, 30000, antesMsgs, frameId);
     if (!resultado.aba) throw new Error(resultado.erro);
     await ajustarJanela(resultado.aba, consulta);
     return { aba: resultado.aba, reaproveitada: false };
+  } catch (e) {
+    falha = e;
+    throw e;
   } finally {
-    await aberturaNaConsulta(consulta.id, 'finalizar').catch(() => {});
+    await aberturaNaConsulta(consulta.id, 'finalizar', null, frameId).catch((e) => {
+      if (!e.pararTudo) return; // contexto destruído por navegação
+      if (falha) falha.pararTudo = true;
+      else throw e;
+    });
   }
 }
 
@@ -300,9 +365,9 @@ async function abrirEsperarAutos(numero, cfg) {
 
 // Deixa a aba dos autos na frente (o print só pega a aba visível).
 async function trazerParaFrente(aba) {
-  await chrome.tabs.update(aba.id, { active: true });
-  const janela = await chrome.windows.get(aba.windowId);
-  await chrome.windows.update(aba.windowId, janela.state === 'minimized' ? { state: 'normal', focused: true } : { focused: true });
+  await acessarAba('update', aba.id, { active: true });
+  const janela = await aguardarResposta(() => chrome.windows.get(aba.windowId), 10000, 'localizar a janela do PJe');
+  await aguardarResposta(() => chrome.windows.update(aba.windowId, janela.state === 'minimized' ? { state: 'normal', focused: true } : { focused: true }), 10000, 'ativar a janela do PJe');
 }
 
 async function garantirVisivel(aba) {
@@ -311,7 +376,7 @@ async function garantirVisivel(aba) {
     const janela = await chrome.windows.get(t.windowId);
     let visivel = t.active && janela.state !== 'minimized';
     if (visivel) {
-      const [r] = await chrome.scripting.executeScript({ target: { tabId: aba.id }, func: () => document.visibilityState });
+      const [r] = await executarScript({ target: { tabId: aba.id }, func: () => document.visibilityState }, 10000, 'verificar a visibilidade dos autos');
       visivel = r?.result === 'visible';
     }
     if (visivel) return;
@@ -491,7 +556,7 @@ async function tirarPrints(aba, base, cfg, numero, arquivos) {
   let limite = 400;
   let aviso = '';
   if (marca?.achou && marca.rola) {
-    const [r] = await chrome.scripting.executeScript({
+    const [r] = await executarScript({
       target: { tabId: aba.id },
       func: (lembranca) => {
         const api = globalThis.__clippingPrints;
@@ -500,7 +565,7 @@ async function tirarPrints(aba, base, cfg, numero, arquivos) {
         return Boolean(area);
       },
       args: [marca.lembranca],
-    });
+    }, 10000, 'selecionar a linha do tempo');
     configPagina.usarEscolhida = Boolean(r?.result);
     if (!configPagina.usarEscolhida) aviso = 'linha do tempo não rolou: usada a rolagem automática';
   } else if (marca?.achou) {
@@ -551,7 +616,7 @@ async function baixarPdf(aba, base, numero, cfg, arquivos) {
   const prep = await chamar(aba.id, 'prepararDownload');
   if (!prep?.ok) throw new Error(prep?.erro || 'não consegui abrir o painel de download dos autos.');
 
-  const antesMsgs = new Set(await chamar(aba.id, 'mensagens').catch(() => []));
+  const antesMsgs = new Set(await chamar(aba.id, 'mensagens').catch(ignorarPaginaAusente));
   const antesAbas = new Set((await chrome.tabs.query({})).map((t) => t.id));
   esperaPdf = { numero, base, host: hostDe((await chrome.tabs.get(aba.id)).url), desde: Date.now(), id: null };
   atualizarOuvinte();
@@ -578,7 +643,7 @@ async function baixarPdf(aba, base, numero, cfg, arquivos) {
       }
       if (Date.now() - olhada > 3000) {
         olhada = Date.now();
-        const novas = (await chamar(aba.id, 'mensagens').catch(() => [])).filter((m) => !antesMsgs.has(m));
+        const novas = (await chamar(aba.id, 'mensagens').catch(ignorarPaginaAusente)).filter((m) => !antesMsgs.has(m));
         const texto = novas.join(' | ');
         if (/area de download|disponibilizad|sera enviad|notificad/.test(norm(texto))) {
           throw new Error(`o PJe mandou o PDF para a "Área de download" em vez de baixar na hora ("${texto.slice(0, 200)}"). Baixe por lá e salve na pasta ${base}.`);
@@ -707,8 +772,8 @@ async function rodar({ numeros } = {}) {
         }
         await atualizarExecucao({ atual: numero, fila: fila.slice(i + 1), etapa: '' });
         const r = await processar(numero);
-        if (r?.pararTudo) {
-          fimTexto = `Rodada interrompida: ${r.mensagem}`;
+        if (r?.pararTudo || rodada.erroPagina) {
+          fimTexto = `Rodada interrompida: ${r?.mensagem || rodada.erroPagina.message}`;
           break;
         }
         if (i + 1 < fila.length && !rodada.parar) await esperar((await lerConfig()).pausa * 1000);
@@ -774,10 +839,10 @@ async function diagnostico() {
   for (const aba of abas) {
     partes.push('='.repeat(100), `ABA: ${aba.title}`, `ENDEREÇO: ${aba.url}`);
     try {
-      const quadros = await chrome.scripting.executeScript({
+      const quadros = await executarScript({
         target: { tabId: aba.id, allFrames: true },
         func: () => ({ url: location.href, html: document.documentElement.outerHTML }),
-      });
+      }, 10000, 'ler o diagnóstico da página');
       for (const q of quadros) partes.push('-'.repeat(100), `QUADRO: ${q.result?.url}`, q.result?.html || '');
     } catch (e) {
       partes.push(`(não deu para ler: ${e.message})`);
